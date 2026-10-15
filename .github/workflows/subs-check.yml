@@ -1,7 +1,7 @@
 name: 自动运行当前项目把测速结果存放到gist里
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */3 * * *'
   workflow_dispatch:
 
 jobs:
