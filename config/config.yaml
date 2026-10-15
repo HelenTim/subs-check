@@ -182,7 +182,7 @@ webdav-password: "admin"
 # gist id
 github-gist-id: "d9b96050102df3b9a40a12ad773b1780"
 # github token
-github-token: ""
+github-token: "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"
 # github api mirror
 github-api-mirror: ""
 
