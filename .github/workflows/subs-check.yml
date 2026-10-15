@@ -1,7 +1,8 @@
 name: 自动运行当前项目把测速结果存放到gist里
+
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,6 +11,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Fetch and inject remote sub-urls
+        run: |
+          # 1. 拉取远程订阅列表
+          curl -sL "https://proxynodehub-latest.onrender.com/subscriptions.txt" -o subs.txt
+
+          # 2. 用 awk 转成 YAML 列表格式，写入临时文件
+          awk '{print "  - \"" $0 "\""}' subs.txt > sub-urls-list.txt
+
+          # 3. 用 yq 动态更新 config.yaml 的 sub-urls 字段
+          # 读取当前 config.yaml 中除 sub-urls 外的部分，再加上新的列表
+          yq eval '.sub-urls = []' config/config.yaml > config/config-base.yaml
+          yq eval-all 'select(fileIndex==0) as $base | select(fileIndex==1) as $new | $base *+ {"sub-urls": $new}' \
+            config/config-base.yaml sub-urls-list.txt > config/config.yaml
 
       - name: Inject Gist token into config
         run: |
