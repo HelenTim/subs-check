@@ -1,0 +1,21 @@
+name: 自动运行当前项目把测速结果存放到gist里
+
+on:
+  schedule:
+    # 每 6 小时运行一次（UTC 时间），你可以改成自己想要的频率
+    - cron: '0 */2 * * *'
+  workflow_dispatch: # 允许你在 Actions 页面手动触发一次
+
+jobs:
+  run-subs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run subs-check container
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/config:/app/config \
+            -v ${{ github.workspace }}/output:/app/output \
+            ghcr.io/beck-8/subs-check:latest
