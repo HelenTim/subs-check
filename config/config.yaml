@@ -266,7 +266,6 @@ sub-urls:
   # - https://example.com/sub.txt#我是备注我是备注
   # 打开这个就可以把上次可用的节点再次测一次
   # - "http://127.0.0.1:8199/sub/all.yaml"
-  - https://proxynodehub-latest.onrender.com/subscriptions.txt #这是自己的用其他项目在github上自动获取订阅节点的项目生成的节点链接
   - https://raw.githubusercontent.com/firefoxmmx2/v2rayshare_subcription/main/subscription/clash_sub.yaml
   - https://raw.githubusercontent.com/Q3dlaXpoaQ/V2rayN_Clash_Node_Getter/refs/heads/main/APIs/sc0.yaml
   - https://raw.githubusercontent.com/mahdibland/SSAggregator/master/sub/sub_merge_yaml.yml
