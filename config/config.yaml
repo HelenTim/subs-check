@@ -182,7 +182,7 @@ webdav-password: "admin"
 # gist id
 github-gist-id: "d9b96050102df3b9a40a12ad773b1780"
 # github token
-github-token: "例如：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"
+github-token: "__GIST_TOKEN__"
 # github api mirror
 github-api-mirror: "https://testspeed.wlsh1.workers.dev/github"
 
