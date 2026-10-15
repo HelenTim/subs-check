@@ -2,7 +2,7 @@ name: 自动运行当前项目把测速结果存放到gist里
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -17,23 +17,66 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Fetch and inject remote sub-urls
+      - name: Resolve and merge sub-urls
         run: |
-          # 1. 拉取远程订阅列表
-          curl -sL "https://proxynodehub-latest.onrender.com/subscriptions.txt" -o subs.txt
+          set -e
+          > resolved-urls.txt
 
-          # 2. 用 awk 转成 YAML 列表格式，写入临时文件
-          awk '{print "  - \"" $0 "\""}' subs.txt > sub-urls-list.txt
+          # 读取 myNode.md，逐行处理
+          while IFS= read -r url; do
+            # 跳过空行和以 # 开头的注释行
+            [ -z "$url" ] && continue
+            case "$url" in \#*) continue ;; esac
 
-          # 3. 用 yq 动态更新 config.yaml 的 sub-urls 字段
-          # 读取当前 config.yaml 中除 sub-urls 外的部分，再加上新的列表
-          yq eval '.sub-urls = []' config/config.yaml > config/config-base.yaml
-          yq eval-all 'select(fileIndex==0) as $base | select(fileIndex==1) as $new | $base *+ {"sub-urls": $new}' \
-            config/config-base.yaml sub-urls-list.txt > config/config.yaml
+            echo "处理: $url"
 
-      - name: Inject Gist token into config
+            content=$(curl -sL --max-time 30 "$url" || true)
+
+            if [ -z "$content" ]; then
+              echo "  拉取失败，跳过"
+              continue
+            fi
+
+            # 判断返回的是节点内容还是地址列表
+            if echo "$content" | grep -qE '^(ss|vmess|vless|trojan|hysteria|hysteria2|tuic)://' \
+               || echo "$content" | grep -qE '^\s*proxies:'; then
+              echo "  节点内容，保留原链接"
+              echo "$url" >> resolved-urls.txt
+            elif echo "$content" | grep -qE '^https?://'; then
+              echo "  地址列表，展开子链接"
+              echo "$content" | grep -E '^https?://' >> resolved-urls.txt
+            else
+              echo "  无法判断格式，保留原链接"
+              echo "$url" >> resolved-urls.txt
+            fi
+          done < myNode.md
+
+          # 合并 config.yaml 里原有的 sub-urls
+          yq eval '.sub-urls[]' config/config.yaml 2>/dev/null >> resolved-urls.txt || true
+
+          # 去重、过滤空行
+          grep -vE '^\s*$' resolved-urls.txt | sort -u > final-urls.txt
+
+          echo "最终链接数:"
+          wc -l < final-urls.txt
+
+          # 生成 sub-urls 块
+          {
+            echo "sub-urls:"
+            while IFS= read -r u; do
+              [ -n "$u" ] && printf '  - "%s"\n' "$u"
+            done < final-urls.txt
+          } > sub-urls-block.yaml
+
+          # 替换 config.yaml 的 sub-urls
+          yq eval 'del(.sub-urls)' config/config.yaml > config-base.yaml
+          yq eval-all 'select(fileIndex==0) *+ select(fileIndex==1)' config-base.yaml sub-urls-block.yaml > config/config.yaml
+
+      - name: Inject Gist token
         run: |
-          sed -i "s|__GIST_TOKEN__|${{ secrets.GIST_TOKEN }}|g" config/config.yaml
+          if [ -n "${{ secrets.GIST_TOKEN }}" ]; then
+            sed -i "s|__GIST_TOKEN__|${{ secrets.GIST_TOKEN }}|g" config/config.yaml
+          fi
 
       - name: Run subs-check container
         run: |
