@@ -1,10 +1,10 @@
 services:
   - type: web
     name: subs-check
-    runtime: docker
-    plan: free # 强烈建议使用付费套餐
+    runtime: image          # 关键修正：不是 docker
+    plan: free
     image:
       url: ghcr.io/beck-8/subs-check:latest
     envVars:
       - key: PORT
-        value: "8199" # 修正 Render 默认端口，与 subs-check 监听端口一致
+        value: "8199"
