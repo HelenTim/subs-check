@@ -1,10 +1,12 @@
 services:
   - type: web
     name: subs-check
-    runtime: image          # 关键修正：不是 docker
+    runtime: image
     plan: free
     image:
       url: ghcr.io/beck-8/subs-check:latest
     envVars:
       - key: PORT
         value: "8199"
+      - key: API_KEY
+        value: "admin"  # 设置一个你记得住的密钥
