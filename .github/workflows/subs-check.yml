@@ -80,7 +80,7 @@ jobs:
 
       - name: Run subs-check container
         run: |
-          docker run --rm \
+          timeout 3600 docker run --rm \
             -v ${{ github.workspace }}/config:/app/config \
             -v ${{ github.workspace }}/output:/app/output \
             ghcr.io/beck-8/subs-check:latest
