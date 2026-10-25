@@ -161,11 +161,17 @@ jobs:
           # 文件 raw 地址: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/output/all.yaml
           cat > /tmp/publish-output.sh <<'EOF'
           #!/bin/bash
+          set -e
           if [ -z "$(ls -A output 2>/dev/null)" ]; then
             echo "output 目录为空，跳过发布"
             exit 0
           fi
-          cd output
+          # 容器以 root 写入挂载的 output/，runner 用户在其中无写权限（git init 会失败）
+          # 先复制到 runner 自己的临时目录再发布
+          rm -rf /tmp/publish-stage
+          mkdir -p /tmp/publish-stage
+          cp -a output/. /tmp/publish-stage/
+          cd /tmp/publish-stage
           git init -q -b output
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
