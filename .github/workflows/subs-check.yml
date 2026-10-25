@@ -45,8 +45,10 @@ jobs:
                 gist_id=$(printf '%s' "$MYNODES" | sed -E 's|[?#].*$||; s|.*/||')
                 curl -sL --max-time 30 \
                   ${GIST_TOKEN:+-H "Authorization: Bearer $GIST_TOKEN"} \
-                  "https://api.github.com/gists/$gist_id" \
-                  | jq -r '[.files[]?.content // empty] | join("\n")' > mynodes-gist.md || true
+                  "https://api.github.com/gists/$gist_id" -o gist-api.json || true
+                # 逐文件统计非空行数：空文件或>1MB被截断的文件，API返回content=null，join时会静默丢失
+                jq -r '.files | to_entries[] | "    文件[\(.key)] 非空行数: \(.value.content // "" | split("\n") | map(select(length>0)) | length)"' gist-api.json 2>/dev/null || true
+                jq -r '[.files[]?.content // empty] | join("\n")' gist-api.json > mynodes-gist.md || true
                 ;;
               *)
                 # raw 链接，直接拉取
@@ -54,11 +56,14 @@ jobs:
                 ;;
             esac
             if [ -s mynodes-gist.md ]; then
-              echo "  已获取，共 $(grep -c . mynodes-gist.md || true) 行非空内容"
+              echo "  已获取，共 $(grep -c . mynodes-gist.md || true) 行非空内容，逐行核对："
+              awk '{ n++; if ($0 ~ /^[ \t\r]*$/) printf "    第%d行: 空行\n", n; else if ($0 ~ /^#/) printf "    第%d行: 注释行\n", n; else printf "    第%d行: 链接（%.24s…）\n", n, $0 }' mynodes-gist.md
               cat mynodes-gist.md >> all-nodes.txt
             else
-              echo "  Gist 获取失败，跳过"
+              echo "  Gist 获取失败，跳过（检查链接有效性或 GIST_TOKEN 权限）"
             fi
+          else
+            echo "MYNODES secret 未配置或为空，跳过该节点来源"
           fi
 
           if [ ! -s all-nodes.txt ]; then
@@ -66,11 +71,21 @@ jobs:
           fi
 
           # 逐行处理（myNode.md 与 Gist 的链接已合并在 all-nodes.txt 中）
+          # 统一去掉 Windows 换行符，防止链接尾部带 \r
+          tr -d '\r' < all-nodes.txt > all-nodes.tmp && mv all-nodes.tmp all-nodes.txt
+          total_lines=$(grep -c . all-nodes.txt || true)
+          skipped_comment=0
           n=0
           while IFS= read -r url; do
             # 跳过空行和以 # 开头的注释行
-            [ -z "$url" ] && continue
-            case "$url" in \#*) continue ;; esac
+            if [ -z "$url" ]; then continue; fi
+            case "$url" in \#*)
+              skipped_comment=$((skipped_comment+1))
+              # 注释行里可能带链接，先掩码前缀再打印
+              echo "::add-mask::${url:0:30}"
+              echo "跳过注释行（前30字符）: ${url:0:30}"
+              continue ;;
+            esac
 
             n=$((n+1))
             # 不在日志中打印具体链接，防止泄露
@@ -85,18 +100,21 @@ jobs:
             fi
 
             # 判断返回的是节点内容还是地址列表
-            if echo "$content" | grep -qE '^(ss|vmess|vless|trojan|hysteria|hysteria2|tuic)://' \
-               || echo "$content" | grep -qE '^\s*proxies:'; then
+            # 2>/dev/null：大内容时 grep -q 匹配后提前退出，echo 会报 Broken pipe，纯噪音无影响
+            if echo "$content" 2>/dev/null | grep -qE '^(ss|vmess|vless|trojan|hysteria|hysteria2|tuic)://' \
+               || echo "$content" 2>/dev/null | grep -qE '^\s*proxies:'; then
               echo "  节点内容，保留原链接"
               echo "$url" >> resolved-urls.txt
-            elif echo "$content" | grep -qE '^https?://'; then
+            elif echo "$content" 2>/dev/null | grep -qE '^https?://'; then
               echo "  地址列表，展开子链接"
-              echo "$content" | grep -E '^https?://' >> resolved-urls.txt
+              echo "$content" | grep -E '^https?://' | tr -d '\r' >> resolved-urls.txt
             else
               echo "  无法判断格式，保留原链接"
               echo "$url" >> resolved-urls.txt
             fi
           done < all-nodes.txt
+
+          echo "行数统计: 输入非空 $total_lines 行 = 处理链接 $n 个 + 注释跳过 $skipped_comment 行"
 
           # 合并 config.yaml 里原有的 sub-urls
           yq eval '.sub-urls[]' config/config.yaml 2>/dev/null >> resolved-urls.txt || true
@@ -119,6 +137,8 @@ jobs:
           yq eval 'del(.sub-urls)' config/config.yaml > config-base.yaml
           yq eval-all 'select(fileIndex==0) *+ select(fileIndex==1)' config-base.yaml sub-urls-block.yaml > config/config.yaml
 
+          echo "config.yaml 最终 sub-urls 数量: $(yq '.sub-urls // [] | length' config/config.yaml)"
+
       - name: Build image from local code
         run: |
           # 不用上游镜像 ghcr.io/beck-8/subs-check:latest（它没有环境变量兜底逻辑），
@@ -136,6 +156,9 @@ jobs:
         run: |
           # gist 配置优先读 config.yaml，未配置时程序自动回退到环境变量
           # GIST_TOKEN / GIST_ID（来自 Repository secrets），token 无需写入仓库
+          # 只打印是否配置，不打印值
+          if [ -n "$GIST_TOKEN" ]; then echo "GIST_TOKEN 已配置"; else echo "⚠️ GIST_TOKEN 未配置"; fi
+          if [ -n "$GIST_ID" ]; then echo "GIST_ID 已配置"; else echo "⚠️ GIST_ID 未配置"; fi
           timeout -k 60 5400 docker run --rm \
             -e GIST_TOKEN -e GIST_ID \
             -v ${{ github.workspace }}/config:/app/config \
