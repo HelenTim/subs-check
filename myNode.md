@@ -2,4 +2,5 @@
 https://proxynodehub-latest.onrender.com/subscriptions.txt
 https://raw.githubusercontent.com/zounimm/SmartSub/refs/heads/main/sub/all_nodes.txt
 https://gist.githubusercontent.com/sohuak/43348cdc0dad284962ab933725a208b4/raw/V2Nodes_config.txt
+https://gist.githubusercontent.com/msormr/0766fe6cf320345d630b1a373f978c7c/raw/mibei77.txt
 
