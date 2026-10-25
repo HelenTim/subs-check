@@ -162,23 +162,29 @@ jobs:
           cat > /tmp/publish-output.sh <<'EOF'
           #!/bin/bash
           set -e
-          if [ -z "$(ls -A output 2>/dev/null)" ]; then
-            echo "output 目录为空，跳过发布"
+          stage=/tmp/publish-stage
+          rm -rf "$stage" && mkdir -p "$stage"
+          # 容器以 root 写入挂载的 output/，部分文件（如 sub-store.log，0600）runner 无权读取
+          # 只白名单复制需要发布的文件
+          published=0
+          for f in all.yaml mihomo.yaml base64.txt all-node.txt; do
+            if [ -f "output/$f" ] && [ -r "output/$f" ]; then
+              cp "output/$f" "$stage/"
+              published=$((published+1))
+            fi
+          done
+          if [ "$published" -eq 0 ]; then
+            echo "无可发布的文件，跳过"
             exit 0
           fi
-          # 容器以 root 写入挂载的 output/，runner 用户在其中无写权限（git init 会失败）
-          # 先复制到 runner 自己的临时目录再发布
-          rm -rf /tmp/publish-stage
-          mkdir -p /tmp/publish-stage
-          cp -a output/. /tmp/publish-stage/
-          cd /tmp/publish-stage
+          cd "$stage"
           git init -q -b output
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -qm "节点检测结果 $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" output
-          echo "已发布 $(ls -1 | wc -l) 个文件到 output 分支"
+          echo "已发布 $published 个文件到 output 分支"
           EOF
           chmod +x /tmp/publish-output.sh
 
