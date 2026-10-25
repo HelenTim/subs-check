@@ -137,7 +137,10 @@ jobs:
           yq eval 'del(.sub-urls)' config/config.yaml > config-base.yaml
           yq eval-all 'select(fileIndex==0) *+ select(fileIndex==1)' config-base.yaml sub-urls-block.yaml > config/config.yaml
 
-          echo "config.yaml 最终 sub-urls 数量: $(yq '.sub-urls // [] | length' config/config.yaml)"
+          echo "===== 最终合并的 sub-urls（共 $(yq '.sub-urls // [] | length' config/config.yaml) 条）====="
+          # 注意：仓库和 Action 日志都是公开的；secret/myNode 来源的顶层链接此前已 add-mask，会显示为 ***
+          yq '.sub-urls[]' config/config.yaml
+          echo "===== sub-urls 明细结束 ====="
 
       - name: Build image from local code
         run: |
