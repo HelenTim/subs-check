@@ -14,3 +14,6 @@ mihomo-check*
 .qoder/
 
 .DS_Store
+
+# 编辑器本地历史
+.history/
