@@ -1,0 +1,143 @@
+name: 自动运行当前项目把测速结果存放到gist里
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-subs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Resolve and merge sub-urls
+        env:
+          MYNODES: ${{ secrets.MYNODES }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          set -e
+          > resolved-urls.txt
+
+          > all-nodes.txt
+
+          # 1) 仓库中的 myNode.md
+          if [ -s myNode.md ]; then
+            echo "读取仓库中的 myNode.md，共 $(grep -c . myNode.md || true) 行非空内容"
+            cat myNode.md >> all-nodes.txt
+          else
+            echo "仓库中无 myNode.md 或为空"
+          fi
+
+          # 2) MYNODES secret 指定的 Gist 链接
+          if [ -n "$MYNODES" ]; then
+            MYNODES="${MYNODES//[[:space:]]/}"
+            echo "从 Gist 获取节点列表"
+            case "$MYNODES" in
+              *gist.github.com/*)
+                # gist 页面链接，通过 API 换取内容
+                gist_id=$(printf '%s' "$MYNODES" | sed -E 's|[?#].*$||; s|.*/||')
+                curl -sL --max-time 30 \
+                  ${GIST_TOKEN:+-H "Authorization: Bearer $GIST_TOKEN"} \
+                  "https://api.github.com/gists/$gist_id" \
+                  | jq -r '[.files[]?.content // empty] | join("\n")' > mynodes-gist.md || true
+                ;;
+              *)
+                # raw 链接，直接拉取
+                curl -sL --max-time 30 "$MYNODES" > mynodes-gist.md || true
+                ;;
+            esac
+            if [ -s mynodes-gist.md ]; then
+              echo "  已获取，共 $(grep -c . mynodes-gist.md || true) 行非空内容"
+              cat mynodes-gist.md >> all-nodes.txt
+            else
+              echo "  Gist 获取失败，跳过"
+            fi
+          fi
+
+          if [ ! -s all-nodes.txt ]; then
+            echo "myNode.md 与 MYNODES 均未提供任何链接，仅使用 config.yaml 中原有的 sub-urls"
+          fi
+
+          # 逐行处理（myNode.md 与 Gist 的链接已合并在 all-nodes.txt 中）
+          n=0
+          while IFS= read -r url; do
+            # 跳过空行和以 # 开头的注释行
+            [ -z "$url" ] && continue
+            case "$url" in \#*) continue ;; esac
+
+            n=$((n+1))
+            # 不在日志中打印具体链接，防止泄露
+            echo "::add-mask::$url"
+            echo "处理第 $n 个链接"
+
+            content=$(curl -sL --max-time 30 "$url" || true)
+
+            if [ -z "$content" ]; then
+              echo "  拉取失败，跳过"
+              continue
+            fi
+
+            # 判断返回的是节点内容还是地址列表
+            if echo "$content" | grep -qE '^(ss|vmess|vless|trojan|hysteria|hysteria2|tuic)://' \
+               || echo "$content" | grep -qE '^\s*proxies:'; then
+              echo "  节点内容，保留原链接"
+              echo "$url" >> resolved-urls.txt
+            elif echo "$content" | grep -qE '^https?://'; then
+              echo "  地址列表，展开子链接"
+              echo "$content" | grep -E '^https?://' >> resolved-urls.txt
+            else
+              echo "  无法判断格式，保留原链接"
+              echo "$url" >> resolved-urls.txt
+            fi
+          done < all-nodes.txt
+
+          # 合并 config.yaml 里原有的 sub-urls
+          yq eval '.sub-urls[]' config/config.yaml 2>/dev/null >> resolved-urls.txt || true
+
+          # 去重、过滤空行
+          grep -vE '^\s*$' resolved-urls.txt | sort -u > final-urls.txt
+
+          echo "最终链接数:"
+          wc -l < final-urls.txt
+
+          # 生成 sub-urls 块
+          {
+            echo "sub-urls:"
+            while IFS= read -r u; do
+              [ -n "$u" ] && printf '  - "%s"\n' "$u"
+            done < final-urls.txt
+          } > sub-urls-block.yaml
+
+          # 替换 config.yaml 的 sub-urls
+          yq eval 'del(.sub-urls)' config/config.yaml > config-base.yaml
+          yq eval-all 'select(fileIndex==0) *+ select(fileIndex==1)' config-base.yaml sub-urls-block.yaml > config/config.yaml
+
+      - name: Build image from local code
+        run: |
+          # 不用上游镜像 ghcr.io/beck-8/subs-check:latest（它没有环境变量兜底逻辑），
+          # 直接用当前仓库代码构建，确保 gist 的 env 回退生效
+          docker build \
+            --build-arg GITHUB_SHA=${{ github.sha }} \
+            --build-arg VERSION=${{ github.ref_name }} \
+            -t subs-check:local .
+
+      - name: Run subs-check container
+        continue-on-error: true
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: |
+          # gist 配置优先读 config.yaml，未配置时程序自动回退到环境变量
+          # GIST_TOKEN / GIST_ID（来自 Repository secrets），token 无需写入仓库
+          timeout -k 60 5400 docker run --rm \
+            -e GIST_TOKEN -e GIST_ID \
+            -v ${{ github.workspace }}/config:/app/config \
+            -v ${{ github.workspace }}/output:/app/output \
+            subs-check:local
