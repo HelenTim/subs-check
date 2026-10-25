@@ -2,6 +2,7 @@ package check
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"math"
@@ -18,10 +19,12 @@ import (
 	"github.com/beck-8/subs-check/check/platform"
 	"github.com/beck-8/subs-check/config"
 	proxyutils "github.com/beck-8/subs-check/proxy"
+	"github.com/beck-8/subs-check/save/method"
 	"github.com/juju/ratelimit"
 	"github.com/metacubex/mihomo/adapter"
 	_ "github.com/metacubex/mihomo/config" // init() sets dns.ParseNameServer, required by ParseProxy
 	"github.com/metacubex/mihomo/constant"
+	"gopkg.in/yaml.v3"
 )
 
 // Result 存储节点检测结果
@@ -193,10 +196,29 @@ func Check() ([]Result, error) {
 	proxies = proxyutils.DeduplicateProxies(proxies)
 	slog.Info(fmt.Sprintf("去重后节点数量: %d", len(proxies)))
 
+	// 检测开始前，把去重后的节点快照（base64）存到 output/all-node.txt
+	dumpDedupProxies(proxies)
+
 	checker := &ProxyChecker{
 		results: make([]Result, 0),
 	}
 	return checker.run(proxies)
+}
+
+// dumpDedupProxies 把去重后的节点以 base64(clash yaml) 快照写入 output/all-node.txt，
+// 仅用于检测前留档排查；失败只记日志，不中断后续检测。
+func dumpDedupProxies(proxies []map[string]any) {
+	yamlBytes, err := yaml.Marshal(map[string]any{"proxies": proxies})
+	if err != nil {
+		slog.Error(fmt.Sprintf("生成去重节点快照失败(序列化): %v", err))
+		return
+	}
+	encoded := base64.StdEncoding.EncodeToString(yamlBytes)
+	if err := method.SaveToLocal([]byte(encoded), "all-node.txt"); err != nil {
+		slog.Error(fmt.Sprintf("写入 output/all-node.txt 失败: %v", err))
+		return
+	}
+	slog.Info(fmt.Sprintf("去重节点快照已写入 output/all-node.txt（base64，节点数: %d）", len(proxies)))
 }
 
 // run drives the 4-stage pipeline: dispatch → alive → media+filter → speed → collect.

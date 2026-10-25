@@ -167,3 +167,12 @@ jobs:
             -v ${{ github.workspace }}/config:/app/config \
             -v ${{ github.workspace }}/output:/app/output \
             subs-check:local
+
+      - name: Upload all-node snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-node
+          path: output/all-node.txt
+          if-no-files-found: ignore
+          retention-days: 3
