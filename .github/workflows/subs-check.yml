@@ -223,8 +223,21 @@ jobs:
             fi
           done
 
-          # 等待检测结束（上限 90 分钟，超时杀容器；已有成果由后续步骤发布）
-          timeout -k 60 5400 docker wait subs-check || docker kill subs-check 2>/dev/null || true
+          # 程序是常驻服务（check-interval 到点循环检测），一轮测完也不会退出，
+          # docker wait 只会空耗到上限。一轮检测完成的标志是收尾时写出 output/all.yaml
+          # （写文件的同时 Gist 也已推送），看到它或容器退出就立即收尾，不空等 90 分钟
+          for i in $(seq 1 270); do
+            if [ -s output/all.yaml ]; then
+              echo "===== 一轮检测完成（all.yaml 已生成），提前结束等待 ====="
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' subs-check 2>/dev/null)" != "true" ]; then
+              echo "容器已退出，提前结束等待"
+              break
+            fi
+            sleep 20
+          done
+          # 无论哪条路径退出都强制回收容器；容器停掉后后台的 docker logs -f 才会结束，步骤才能收尾
           docker rm -f subs-check 2>/dev/null || true
 
       - name: Publish results to output branch
