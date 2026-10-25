@@ -155,31 +155,12 @@ jobs:
             --build-arg VERSION=${{ github.ref_name }} \
             -t subs-check:local .
 
-      - name: Run subs-check container
-        continue-on-error: true
-        env:
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
-          GIST_ID: ${{ secrets.GIST_ID }}
+      - name: Write publish helper
         run: |
-          # gist 配置优先读 config.yaml，未配置时程序自动回退到环境变量
-          # GIST_TOKEN / GIST_ID（来自 Repository secrets），token 无需写入仓库
-          # 只打印是否配置，不打印值
-          if [ -n "$GIST_TOKEN" ]; then echo "GIST_TOKEN 已配置"; else echo "⚠️ GIST_TOKEN 未配置"; fi
-          if [ -n "$GIST_ID" ]; then echo "GIST_ID 已配置"; else echo "⚠️ GIST_ID 未配置"; fi
-          timeout -k 60 5400 docker run --rm \
-            -e GIST_TOKEN -e GIST_ID \
-            -v ${{ github.workspace }}/config:/app/config \
-            -v ${{ github.workspace }}/output:/app/output \
-            subs-check:local
-
-      - name: Publish results to output branch
-        if: always()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 把 output/ 全量发布到独立的 output 分支（每次单提交覆盖推送，不累积历史）
-          # 查看位置: 仓库分支切换到 output；文件 raw 地址:
-          # https://raw.githubusercontent.com/${{ github.repository }}/output/all.yaml
+          # 可复用的发布脚本：把 output/ 单提交覆盖推送到 output 分支（不累积历史）
+          # 文件 raw 地址: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/output/all.yaml
+          cat > /tmp/publish-output.sh <<'EOF'
+          #!/bin/bash
           if [ -z "$(ls -A output 2>/dev/null)" ]; then
             echo "output 目录为空，跳过发布"
             exit 0
@@ -190,8 +171,55 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -qm "节点检测结果 $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" output
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" output
           echo "已发布 $(ls -1 | wc -l) 个文件到 output 分支"
+          EOF
+          chmod +x /tmp/publish-output.sh
+
+      - name: Run subs-check container
+        continue-on-error: true
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # gist 配置优先读 config.yaml，未配置时程序自动回退到环境变量
+          # GIST_TOKEN / GIST_ID（来自 Repository secrets），token 无需写入仓库
+          if [ -n "$GIST_TOKEN" ]; then echo "GIST_TOKEN 已配置"; else echo "⚠️ GIST_TOKEN 未配置"; fi
+          if [ -n "$GIST_ID" ]; then echo "GIST_ID 已配置"; else echo "⚠️ GIST_ID 未配置"; fi
+
+          # 后台启动检测容器；docker logs -f 把容器日志实时回传到 Actions 日志
+          docker run -d --name subs-check \
+            -e GIST_TOKEN -e GIST_ID \
+            -v ${{ github.workspace }}/config:/app/config \
+            -v ${{ github.workspace }}/output:/app/output \
+            subs-check:local
+          docker logs -f subs-check &
+
+          # 去重一完成程序就会写出 output/all-node.txt；
+          # 轮询发现后立即发布到 output 分支——不等待检测结束
+          for i in $(seq 1 45); do
+            sleep 20
+            if [ -s output/all-node.txt ]; then
+              echo "===== 去重快照已生成，立即发布到 output 分支（检测继续进行）====="
+              bash /tmp/publish-output.sh
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' subs-check 2>/dev/null)" != "true" ]; then
+              echo "容器已提前退出，跳过中途发布（最终发布步骤兜底）"
+              break
+            fi
+          done
+
+          # 等待检测结束（上限 90 分钟，超时杀容器；已有成果由后续步骤发布）
+          timeout -k 60 5400 docker wait subs-check || docker kill subs-check 2>/dev/null || true
+          docker rm -f subs-check 2>/dev/null || true
+
+      - name: Publish results to output branch
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash /tmp/publish-output.sh
 
       - name: Upload all-node snapshot
         if: always()
